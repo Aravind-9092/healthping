@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HealthPing Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; color: #333; }
+
+        .navbar {
+            background: linear-gradient(135deg, #1a6a8a, #2E86AB);
+            padding: 0 32px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .navbar-left { display: flex; align-items: center; gap: 12px; }
+        .navbar h1 { color: white; font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+        .navbar-badge { background: rgba(255,255,255,0.2); color: white; font-size: 11px; padding: 3px 10px; border-radius: 99px; }
+        .navbar-right { display: flex; align-items: center; gap: 16px; }
+        .refresh-indicator { color: rgba(255,255,255,0.7); font-size: 12px; }
+        .live-dot { display: inline-block; width: 8px; height: 8px; background: #2ecc71; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .container { max-width: 1200px; margin: 28px auto; padding: 0 24px; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px 24px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+        }
+        .stat-card.blue::before { background: #2E86AB; }
+        .stat-card.green::before { background: #27ae60; }
+        .stat-card.red::before { background: #e74c3c; }
+        .stat-card.orange::before { background: #f39c12; }
+        .stat-icon { font-size: 28px; margin-bottom: 12px; }
+        .stat-label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+        .stat-value { font-size: 32px; font-weight: 700; color: #1a1a2e; line-height: 1; }
+        .stat-sub { font-size: 12px; color: #aaa; margin-top: 6px; }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 18px 24px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .card-title { font-size: 15px; font-weight: 600; color: #1a1a2e; }
+        .card-body { padding: 20px 24px; }
+
+        .patient-table-wrap { background: white; border-radius: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); overflow: hidden; }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            background: #f8fafc;
+            color: #666;
+            padding: 12px 20px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        td { padding: 16px 20px; font-size: 14px; border-bottom: 1px solid #f8f8f8; }
+        tr:last-child td { border-bottom: none; }
+        tr.danger-row { background: #fff8f8; }
+        tr.danger-row:hover td { background: #fff0f0; }
+        tr:not(.danger-row):hover td { background: #f8fbfd; }
+        .patient-name { font-weight: 600; color: #1a1a2e; }
+        .patient-phone { font-size: 12px; color: #aaa; margin-top: 2px; }
+        .condition-tag {
+            display: inline-block;
+            background: #eaf4fb;
+            color: #1a6a8a;
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 99px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 99px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
+        .badge-danger { background: #fde8e8; color: #c0392b; }
+        .badge-danger::before { background: #e74c3c; }
+        .badge-warning { background: #fef3e2; color: #d68910; }
+        .badge-warning::before { background: #f39c12; }
+        .badge-success { background: #e8f8f0; color: #1e8449; }
+        .badge-success::before { background: #27ae60; }
+        .badge-normal { background: #eaf4fb; color: #1a6a8a; }
+        .badge-normal::before { background: #2E86AB; }
+
+        .reading-val { font-weight: 600; color: #1a1a2e; }
+        .reading-val.high { color: #e74c3c; }
+        .reading-val.normal { color: #27ae60; }
+        .time-val { font-size: 13px; color: #888; }
+
+        .no-data { text-align: center; padding: 60px; color: #bbb; }
+        .no-data-icon { font-size: 40px; margin-bottom: 12px; }
+        .no-data p { font-size: 14px; }
+
+        .alert-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        .alert-item:last-child { border-bottom: none; }
+        .alert-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .alert-dot.red { background: #e74c3c; }
+        .alert-dot.orange { background: #f39c12; }
+        .alert-text { font-size: 13px; color: #444; flex: 1; }
+        .alert-time { font-size: 11px; color: #bbb; }
+
+        .chart-container { position: relative; height: 200px; }
+
+        @media (max-width: 768px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .grid-2 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="navbar-left">
+        <h1>🏥 HealthPing</h1>
+        <span class="navbar-badge">Doctor Dashboard</span>
+    </div>
+    <div class="navbar-right">
+        <span class="refresh-indicator">
+            <span class="live-dot"></span>
+            Auto-refreshes every 30s
+        </span>
+    </div>
+</nav>
+
+<div class="container">
+
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card blue">
+            <div class="stat-icon">👥</div>
+            <div class="stat-label">Total Patients</div>
+            <div class="stat-value">{{ total_patients }}</div>
+            <div class="stat-sub">registered on HealthPing</div>
+        </div>
+        <div class="stat-card green">
+            <div class="stat-icon">✅</div>
+            <div class="stat-label">Logged Today</div>
+            <div class="stat-value">{{ logged_today }}</div>
+            <div class="stat-sub">out of {{ total_patients }} patients</div>
+        </div>
+        <div class="stat-card red">
+            <div class="stat-icon">🚨</div>
+            <div class="stat-label">Danger Alerts</div>
+            <div class="stat-value">{{ danger_count }}</div>
+            <div class="stat-sub">need immediate attention</div>
+        </div>
+        <div class="stat-card orange">
+            <div class="stat-icon">⚠️</div>
+            <div class="stat-label">Missing 3+ Days</div>
+            <div class="stat-value">{{ missing_count }}</div>
+            <div class="stat-sub">patients not logging</div>
+        </div>
+    </div>
+
+    <!-- Charts + Alerts row -->
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📊 Patient Status Overview</span>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">🚨 Recent Alerts</span>
+            </div>
+            <div class="card-body">
+                {% if danger_patients %}
+                    {% for p in danger_patients %}
+                    <div class="alert-item">
+                        <div class="alert-dot red"></div>
+                        <div class="alert-text">
+                            <strong>{{ p.name }}</strong> — {{ p.alert_msg }}
+                        </div>
+                        <div class="alert-time">{{ p.last_reading }}</div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div style="text-align:center; padding: 40px; color: #bbb;">
+                        <div style="font-size:32px; margin-bottom:8px;">✅</div>
+                        <p style="font-size:13px;">No danger alerts today</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Patients Table -->
+    <div class="patient-table-wrap">
+        <div class="card-header" style="padding: 18px 24px;">
+            <span class="card-title">👤 All Patients</span>
+            <span style="font-size:12px; color:#aaa;">{{ total_patients }} total</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Condition</th>
+                    <th>Last Sugar</th>
+                    <th>Last BP</th>
+                    <th>Last Reading</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if patients %}
+                    {% for p in patients %}
+                    <tr class="{{ 'danger-row' if p.status_class == 'danger' else '' }}">
+                        <td>
+                            <div class="patient-name">{{ p.name or "Unknown" }}</div>
+                            <div class="patient-phone">{{ p.phone }}</div>
+                        </td>
+                        <td><span class="condition-tag">{{ p.condition or "Not set" }}</span></td>
+                        <td>
+                            <span class="reading-val {{ 'high' if p.is_sugar_high else 'normal' if p.is_sugar_normal else '' }}">
+                                {{ p.last_sugar }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="reading-val {{ 'high' if p.is_bp_high else '' }}">
+                                {{ p.last_bp }}
+                            </span>
+                        </td>
+                        <td><span class="time-val">{{ p.last_reading }}</span></td>
+                        <td><span class="badge badge-{{ p.status_class }}">{{ p.status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6">
+                            <div class="no-data">
+                                <div class="no-data-icon">🏥</div>
+                                <p>No patients yet. Share your WhatsApp number to get started!</p>
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+    // Auto refresh every 30 seconds
+    setTimeout(() => location.reload(), 30000);
+
+    // Status chart
+    const ctx = document.getElementById('statusChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Active', 'Danger', 'Missing', 'No Data'],
+            datasets: [{
+                data: [{{ active_count }}, {{ danger_count }}, {{ missing_count }}, {{ no_data_count }}],
+                backgroundColor: ['#27ae60', '#e74c3c', '#f39c12', '#95a5a6'],
+                borderWidth: 0,
+                hoverOffset: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { font: { size: 12 }, padding: 16 }
+                }
+            },
+            cutout: '65%'
+        }
+    });
+</script>
+
+</body>
+</html>
