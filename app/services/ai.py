@@ -6,7 +6,29 @@ import json
 load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-MODEL = "llama-3.1-8b-instant"
+MODEL = "qwen/qwen3.8-27b"
+
+def detect_language(message: str) -> str:
+    prompt = f"""
+    Detect the language of this message and return ONLY one word:
+    - Return "english" if the message is in English
+    - Return "hindi" if the message is in Hindi
+    - Return "telugu" if the message is in Telugu
+    - Return "tamil" if the message is in Tamil
+    - Return "english" for any other language
+
+    Message: "{message}"
+
+    Return only one word, nothing else.
+    """
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    detected = response.choices[0].message.content.strip().lower()
+    if detected not in ["english", "hindi", "telugu", "tamil"]:
+        return "english"
+    return detected
 
 def extract_health_data(message: str) -> dict:
     prompt = f"""
@@ -35,7 +57,15 @@ def extract_health_data(message: str) -> dict:
     except:
         return {"sugar": None, "bp_systolic": None, "bp_diastolic": None, "weight": None, "notes": message}
 
-def generate_health_response(data: dict, user_name: str, condition: str = None) -> str:
+def generate_health_response(data: dict, user_name: str, condition: str = None, language: str = "english") -> str:
+
+    language_instruction = {
+        "english": "Respond in English.",
+        "hindi": "Respond in Hindi language using Devanagari script.",
+        "telugu": "Respond in Telugu language using Telugu script.",
+        "tamil": "Respond in Tamil language using Tamil script."
+    }.get(language, "Respond in English.")
+
     prompt = f"""
     You are HealthPing, a friendly AI health coach on WhatsApp.
 
@@ -46,6 +76,8 @@ def generate_health_response(data: dict, user_name: str, condition: str = None) 
     - Blood Pressure: {data.get("bp_systolic")}/{data.get("bp_diastolic")} mmHg
     - Weight: {data.get("weight")} kg
     - Notes: {data.get("notes")}
+
+    {language_instruction}
 
     IMPORTANT RULES:
     - If notes contain "no sugar" or "don't have sugar/diabetes" it means the person is saying they don't have diabetes — acknowledge it positively, don't ask for sugar readings
@@ -74,7 +106,6 @@ def check_danger_levels(data: dict) -> str | None:
 
     alerts = []
 
-    # Sugar checks
     if sugar is not None:
         if sugar >= 300:
             alerts.append("🚨 URGENT: Your blood sugar is critically high ({} mg/dL). Please contact your doctor immediately or go to the nearest hospital.".format(sugar))
@@ -83,7 +114,6 @@ def check_danger_levels(data: dict) -> str | None:
         elif sugar <= 70:
             alerts.append("🚨 URGENT: Your blood sugar is dangerously low ({} mg/dL). Eat something sweet immediately — a glucose tablet, juice, or sugar. Don't wait.".format(sugar))
 
-    # BP checks
     if systolic is not None and diastolic is not None:
         if systolic >= 180 or diastolic >= 120:
             alerts.append("🚨 URGENT: Your blood pressure is critically high ({}/{}). This is a hypertensive crisis. Go to the hospital immediately.".format(systolic, diastolic))
@@ -96,7 +126,15 @@ def check_danger_levels(data: dict) -> str | None:
         return "\n\n".join(alerts)
     return None
 
-def generate_weekly_summary(readings: list, user_name: str, condition: str) -> str:
+def generate_weekly_summary(readings: list, user_name: str, condition: str, language: str = "english") -> str:
+
+    language_instruction = {
+        "english": "Write the entire summary in English.",
+        "hindi": "Write the entire summary in Hindi using Devanagari script.",
+        "telugu": "Write the entire summary in Telugu using Telugu script.",
+        "tamil": "Write the entire summary in Tamil using Tamil script."
+    }.get(language, "Write the entire summary in English.")
+
     if not readings:
         return f"Hi {user_name}! No readings found for this week. Start logging daily and I'll give you a full weekly report next Sunday! 💪"
 
@@ -120,14 +158,16 @@ def generate_weekly_summary(readings: list, user_name: str, condition: str) -> s
     This week's readings:
     {readings_text}
 
-    Generate a warm weekly summary report with:
-    1. A greeting and week summary (1 line)
-    2. Best reading of the week (1 line)
-    3. Concerning reading if any (1 line)
-    4. One specific tip for next week based on their pattern
-    5. Encouragement to keep logging
+    {language_instruction}
 
-    Keep it under 10 lines. Use emojis. Be warm and personal.
+    Generate a warm weekly summary report in bullet points format:
+    • Week Summary (1 line)
+    • Best reading of the week
+    • Concerning reading if any
+    • One specific tip for next week
+    • Encouragement to keep logging
+
+    Keep it under 10 lines. Use emojis. Be warm, clear and easy to understand.
     """
 
     response = client.chat.completions.create(

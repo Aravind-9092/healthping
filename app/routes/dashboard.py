@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.reading import Reading
 from datetime import datetime, timedelta
 import jinja2
+from urllib.parse import unquote
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 env = jinja2.Environment(loader=jinja2.FileSystemLoader("app/templates"))
@@ -13,9 +14,9 @@ env = jinja2.Environment(loader=jinja2.FileSystemLoader("app/templates"))
 @router.get("/", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(get_db)):
     users = db.query(User).filter(User.onboarding_step == "complete").all()
-    
+
     today = datetime.utcnow().date()
-    
+
     danger_count = 0
     missing_count = 0
     logged_today = 0
@@ -78,7 +79,8 @@ def dashboard(db: Session = Depends(get_db)):
                 danger_patients.append({
                     "name": user.name or user.phone,
                     "alert_msg": alert_msg,
-                    "last_reading": last_reading.created_at.strftime("%I:%M %p")
+                    "last_reading": last_reading.created_at.strftime("%I:%M %p"),
+                    "phone": user.phone
                 })
 
             last_sugar = f"{last_reading.sugar} mg/dL" if last_reading.sugar else "-"
@@ -119,5 +121,20 @@ def dashboard(db: Session = Depends(get_db)):
         missing_count=missing_count,
         active_count=active_count,
         no_data_count=no_data_count
+    )
+    return HTMLResponse(content=html)
+
+@router.get("/patient/{phone}", response_class=HTMLResponse)
+def patient_history(phone: str, db: Session = Depends(get_db)):
+    phone = unquote(phone)
+    patient = db.query(User).filter(User.phone == phone).first()
+    readings = db.query(Reading).filter(
+        Reading.phone == phone
+    ).order_by(Reading.created_at.desc()).all()
+
+    template = env.get_template("patient.html")
+    html = template.render(
+        patient=patient,
+        readings=readings
     )
     return HTMLResponse(content=html)
