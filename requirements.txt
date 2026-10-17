@@ -1,8 +1,11 @@
 fastapi
 uvicorn
 python-dotenv
-openai
 sqlalchemy
-psycopg2-binary
 twilio
 apscheduler
+python-multipart
+groq
+reportlab
+jinja2
+psycopg2-binary
