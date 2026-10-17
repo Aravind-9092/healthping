@@ -25,7 +25,9 @@
         .navbar-badge { background: rgba(255,255,255,0.2); color: white; font-size: 11px; padding: 4px 12px; border-radius: 99px; }
         .live-dot { display: inline-block; width: 8px; height: 8px; background: #2ecc71; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-        .navbar-right { color: rgba(255,255,255,0.8); font-size: 13px; }
+        .navbar-right { color: rgba(255,255,255,0.8); font-size: 13px; display: flex; align-items: center; gap: 16px; }
+        .sound-btn { background: rgba(255,255,255,0.2); color: white; border: none; padding: 6px 14px; border-radius: 99px; cursor: pointer; font-size: 12px; }
+        .sound-btn:hover { background: rgba(255,255,255,0.3); }
 
         .danger-banner {
             background: linear-gradient(135deg, #e74c3c, #c0392b);
@@ -91,15 +93,18 @@
         .badge-success::before { background: #27ae60; }
         .badge-normal { background: #eaf4fb; color: #1a6a8a; }
         .badge-normal::before { background: #2E86AB; }
+        .treated-note { font-size: 11px; color: #999; margin-top: 4px; }
 
         .reading-high { color: #e74c3c; font-weight: 600; }
         .reading-normal { color: #27ae60; font-weight: 600; }
         .reading-na { color: #ccc; }
 
+        .action-cell { display: flex; align-items: center; gap: 8px; }
         .view-btn { background: #2E86AB; color: white; border: none; padding: 6px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; text-decoration: none; }
         .view-btn:hover { background: #1a6a8a; }
+        .treat-btn { background: #27ae60; color: white; border: none; padding: 6px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+        .treat-btn:hover { background: #1e8449; }
 
-        .history-section { background: white; border-radius: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); overflow: hidden; margin-bottom: 24px; }
         .no-alerts { text-align: center; padding: 40px; color: #bbb; }
         .no-alerts-icon { font-size: 40px; margin-bottom: 12px; }
 
@@ -114,8 +119,8 @@
         <span class="navbar-badge">Doctor Dashboard</span>
     </div>
     <div class="navbar-right">
-        <span class="live-dot"></span>
-        Auto-refreshes every 30s
+        <button id="soundBtn" class="sound-btn" type="button"></button>
+        <span><span class="live-dot"></span>Auto-refreshes every 30s</span>
     </div>
 </nav>
 
@@ -128,7 +133,7 @@
             <p>{{ danger_patients|length }} patient(s) have critical readings right now</p>
         </div>
     </div>
-    <span style="font-size:13px; opacity:0.9">Dashboard auto-refreshes every 30s</span>
+    <span style="font-size:13px; opacity:0.9">Mark a patient as treated once they have been attended to</span>
 </div>
 {% endif %}
 
@@ -162,7 +167,7 @@
         </div>
     </div>
 
-    <!-- Alerts + Recent Activity -->
+    <!-- Alerts + Status Overview -->
     <div class="grid-2">
         <div class="card">
             <div class="card-header">
@@ -181,6 +186,9 @@
                             <div class="alert-msg">{{ p.alert_msg }}</div>
                             <div class="alert-time">{{ p.last_reading }} • {{ p.phone }}</div>
                         </div>
+                        <form method="post" action="/dashboard/treated/{{ p.reading_id }}">
+                            <button type="submit" class="treat-btn">✔ Mark as Treated</button>
+                        </form>
                     </div>
                     {% endfor %}
                 {% else %}
@@ -270,8 +278,22 @@
                             </span>
                         </td>
                         <td style="color:#888; font-size:13px;">{{ p.last_reading }}</td>
-                        <td><span class="badge badge-{{ p.status_class }}">{{ p.status }}</span></td>
-                        <td><a href="/dashboard/patient/{{ p.phone|urlencode }}" class="view-btn">View History</a></td>
+                        <td>
+                            <span class="badge badge-{{ p.status_class }}">{{ p.status }}</span>
+                            {% if p.treated %}
+                            <div class="treated-note">✓ Treated by doctor</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="action-cell">
+                                <a href="/dashboard/patient/{{ p.phone|urlencode }}" class="view-btn">View History</a>
+                                {% if p.status_class == 'danger' %}
+                                <form method="post" action="/dashboard/treated/{{ p.reading_id }}">
+                                    <button type="submit" class="treat-btn">✔ Mark as Treated</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
                     </tr>
                     {% endfor %}
                 {% else %}
@@ -295,20 +317,35 @@
 <script>
     setTimeout(() => location.reload(), 30000);
 
-    {% if danger_patients %}
-    // Play alert sound for danger patients
-    try {
-        const ctx = new AudioContext();
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        oscillator.frequency.value = 880;
-        gainNode.gain.value = 0.1;
-        oscillator.start();
-        oscillator.stop(ctx.currentTime + 0.3);
-    } catch(e) {}
-    {% endif %}
+    // Sound is OFF by default. The choice is remembered in this browser.
+    const dangerCount = {{ danger_patients|length }};
+    const soundOn = localStorage.getItem('alertSound') === 'on';
+    const lastCount = parseInt(localStorage.getItem('lastDangerCount') || '0');
+
+    const btn = document.getElementById('soundBtn');
+    btn.textContent = soundOn ? '🔔 Sound on' : '🔕 Sound off';
+    btn.onclick = () => {
+        localStorage.setItem('alertSound', soundOn ? 'off' : 'on');
+        location.reload();
+    };
+
+    function beep() {
+        try {
+            const ctx = new AudioContext();
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            oscillator.frequency.value = 880;
+            gainNode.gain.value = 0.1;
+            oscillator.start();
+            oscillator.stop(ctx.currentTime + 0.3);
+        } catch (e) {}
+    }
+
+    // Beep only when sound is on AND the number of danger patients has gone up
+    if (soundOn && dangerCount > lastCount) beep();
+    localStorage.setItem('lastDangerCount', dangerCount);
 </script>
 
 </body>

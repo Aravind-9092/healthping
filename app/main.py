@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from app.routes import whatsapp, dashboard
 from app.database import engine
 from app.models import user, reading
+from app.models import user, reading, treatment
 import os
 
 user.Base.metadata.create_all(bind=engine)

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.models.reading import Reading
+from app.models.treatment import Treatment
 from datetime import datetime, timedelta
 import jinja2
 from urllib.parse import unquote
@@ -11,11 +12,15 @@ from urllib.parse import unquote
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 env = jinja2.Environment(loader=jinja2.FileSystemLoader("app/templates"))
 
+# Timestamps are stored in UTC; show them in Indian Standard Time
+IST = timedelta(hours=5, minutes=30)
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(get_db)):
     users = db.query(User).filter(User.onboarding_step == "complete").all()
 
-    today = datetime.utcnow().date()
+    today = (datetime.utcnow() + IST).date()
 
     danger_count = 0
     missing_count = 0
@@ -30,21 +35,16 @@ def dashboard(db: Session = Depends(get_db)):
             Reading.phone == user.phone
         ).order_by(Reading.created_at.desc()).first()
 
+        reading_id = None
+        treated = False
+
         if last_reading:
-            last_date = last_reading.created_at.date()
-            days_ago = (today - last_date).days
+            reading_id = last_reading.id
+            local_time = last_reading.created_at + IST
+            days_ago = (today - local_time.date()).days
 
             if days_ago == 0:
                 logged_today += 1
-
-            if days_ago >= 3:
-                missing_count += 1
-                status = "Missing"
-                status_class = "warning"
-            else:
-                active_count += 1
-                status = "Active"
-                status_class = "success"
 
             is_danger = False
             alert_msg = ""
@@ -69,23 +69,40 @@ def dashboard(db: Session = Depends(get_db)):
                 is_bp_high = True
                 alert_msg = f"BP critically high at {last_reading.bp_systolic}/{last_reading.bp_diastolic}"
 
+            # If a doctor already marked THIS reading as treated, it no longer counts as danger.
+            # A new dangerous reading has a new id, so it will raise the alert again.
+            if is_danger:
+                treated = db.query(Treatment).filter(
+                    Treatment.reading_id == last_reading.id
+                ).first() is not None
+                if treated:
+                    is_danger = False
+                    is_sugar_high = False
+                    is_bp_high = False
+
             if is_danger:
                 danger_count += 1
-                if days_ago >= 3:
-                    missing_count -= 1
-                active_count = max(0, active_count - 1)
                 status = "Danger"
                 status_class = "danger"
                 danger_patients.append({
                     "name": user.name or user.phone,
                     "alert_msg": alert_msg,
-                    "last_reading": last_reading.created_at.strftime("%I:%M %p"),
-                    "phone": user.phone
+                    "last_reading": local_time.strftime("%I:%M %p"),
+                    "phone": user.phone,
+                    "reading_id": last_reading.id
                 })
+            elif days_ago >= 3:
+                missing_count += 1
+                status = "Missing"
+                status_class = "warning"
+            else:
+                active_count += 1
+                status = "Active"
+                status_class = "success"
 
             last_sugar = f"{last_reading.sugar} mg/dL" if last_reading.sugar else "-"
             last_bp = f"{last_reading.bp_systolic}/{last_reading.bp_diastolic}" if last_reading.bp_systolic else "-"
-            last_reading_str = last_reading.created_at.strftime("%d %b, %I:%M %p")
+            last_reading_str = local_time.strftime("%d %b, %I:%M %p")
         else:
             no_data_count += 1
             status = "No Data"
@@ -108,7 +125,9 @@ def dashboard(db: Session = Depends(get_db)):
             "status_class": status_class,
             "is_sugar_high": is_sugar_high,
             "is_sugar_normal": is_sugar_normal,
-            "is_bp_high": is_bp_high
+            "is_bp_high": is_bp_high,
+            "reading_id": reading_id,
+            "treated": treated
         })
 
     template = env.get_template("dashboard.html")
@@ -123,6 +142,19 @@ def dashboard(db: Session = Depends(get_db)):
         no_data_count=no_data_count
     )
     return HTMLResponse(content=html)
+
+
+@router.post("/treated/{reading_id}")
+def mark_treated(reading_id: int, db: Session = Depends(get_db)):
+    """Doctor clicks 'Mark as Treated' on a danger alert."""
+    reading = db.query(Reading).filter(Reading.id == reading_id).first()
+    if reading:
+        already = db.query(Treatment).filter(Treatment.reading_id == reading_id).first()
+        if not already:
+            db.add(Treatment(phone=reading.phone, reading_id=reading_id))
+            db.commit()
+    return RedirectResponse(url="/dashboard/", status_code=303)
+
 
 @router.get("/patient/{phone}", response_class=HTMLResponse)
 def patient_history(phone: str, db: Session = Depends(get_db)):
