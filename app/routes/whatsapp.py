@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
+from xml.sax.saxutils import escape
 from app.database import get_db
 from app.models.user import User
 from app.models.reading import Reading
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 def twiml_response(message: str) -> PlainTextResponse:
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Message>{message}</Message>
+    <Message>{escape(message)}</Message>
 </Response>"""
     return PlainTextResponse(twiml, media_type="text/xml")
 
@@ -38,6 +39,14 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     detected_language = detect_language(incoming_msg)
 
     user = db.query(User).filter(User.phone == sender).first()
+
+    # RESET COMMAND (for demos)
+    if incoming_msg.lower() == "reset":
+        db.query(Reading).filter(Reading.phone == sender).delete()
+        if user:
+            db.delete(user)
+        db.commit()
+        return twiml_response("Reset done! Send 'Hi' to start fresh.")
 
     # NEW USER
     if not user:
@@ -118,15 +127,20 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         summary = generate_weekly_summary(readings, user.name, user.condition, user.language)
         pdf_path = generate_pdf_report(user, readings, summary)
 
-        ngrok_url = os.getenv("NGROK_URL")
+        base_url = os.getenv("NGROK_URL", "").rstrip("/")
         pdf_filename = os.path.basename(pdf_path)
 
-        twilio_client.messages.create(
-            from_="whatsapp:+14155238886",
-            to=f"whatsapp:{sender}",
-            media_url=[f"{ngrok_url}/reports/{pdf_filename}"],
-            body=f"📋 Here's your weekly health report, {user.name}!"
-        )
+        try:
+            twilio_client.messages.create(
+                from_="whatsapp:+14155238886",
+                to=f"whatsapp:{sender}",
+                media_url=[f"{base_url}/reports/{pdf_filename}"],
+                body=f"📋 Here's your weekly health report, {user.name}!"
+            )
+        except Exception as e:
+            print("Twilio PDF send error:", e)
+            return twiml_response("Sorry, I couldn't send the PDF right now. Please try again in a minute.")
+
         return twiml_response("Generating your PDF report... sending it now! 📄")
 
     # ONBOARDED USER - process health readings
